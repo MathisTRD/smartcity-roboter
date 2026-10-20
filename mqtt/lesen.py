@@ -4,7 +4,7 @@ import argparse
 import importlib
 import os
 
-from common import env_value, load_config, robot_id
+from common import load_config, mqtt_client, robot_id
 
 try:
     mqtt = importlib.import_module('paho.mqtt.client')
@@ -20,12 +20,7 @@ def main():
     config = load_config(args.config)
     robot = args.robot or robot_id(config)
     broker = config.get('broker', {})
-    client = mqtt.Client(client_id=f"smartcity-reader-{os.getpid()}")
-    username = env_value(broker, 'username')
-    if username:
-        client.username_pw_set(username, env_value(broker, 'password'))
-    if broker.get('tls'):
-        client.tls_set()
+    client = mqtt_client(mqtt, f"smartcity-reader-{os.getpid()}", broker)
 
     def on_connect(client, userdata, flags, rc):
         if rc:

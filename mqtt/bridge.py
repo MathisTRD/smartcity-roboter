@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Nicht blockierende ROS2 -> MQTT-Bridge fuer die SmartCity-Roboter."""
+"""Nicht blockierende ROS2 <-> MQTT-Bridge fuer die SmartCity-Roboter.
+
+Richtung Broker: konfigurierte ROS2-Topics als JSON. Richtung Roboter: nur freigegebene Befehle
+(STOPP, TEST, START, Tempo) ueber <base>/<roboter>/cmd und <base>/all/cmd. Diese gehen an die lokale
+Panel-API, damit dieselben Sicherheitspruefungen gelten wie beim Knopf im Panel.
+"""
 import argparse
 import hashlib
 import json
@@ -8,10 +13,12 @@ import queue
 import signal
 import threading
 import time
+import urllib.request
 import uuid
 from pathlib import Path
 
 import rclpy
+from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rosidl_runtime_py.convert import message_to_ordereddict
@@ -23,7 +30,7 @@ try:
 except ImportError:
     mqtt = None
 
-from common import dumps, env_value, load_config, robot_id, utc_now
+from common import befehl_pruefen, dumps, load_config, mqtt_client, robot_id, utc_now
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -44,9 +51,19 @@ class MqttBridge(Node):
         self.running = True
         self.map_signatures = {}
         self.map_hashes = {}
+        befehle = config.get('commands', {})
+        self.befehle_aktiv = bool(befehle.get('enabled', True))
+        self.befehle_erlaubt = set(befehle.get('allowed', ['stopp']))
+        self.befehl_max_alter = float(befehle.get('max_age_seconds', 10))
+        self.panel_url = str(befehle.get('panel_url', 'http://127.0.0.1:8080')).rstrip('/')
+        self.letzte_befehl_ids = []
+        self.befehle_angenommen = 0
+        self.befehle_abgelehnt = 0
         self.worker = threading.Thread(target=self._publish_loop, daemon=True)
         self.worker.start()
         self.status_pub = self.create_publisher(String, '/mqtt/status', 10)
+        self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.ereignis_pub = self.create_publisher(String, '/ki/ereignis', 10)
         self._connect_mqtt()
         self._load_subscriptions()
         self.create_timer(2.0, self._status)
@@ -62,20 +79,17 @@ class MqttBridge(Node):
             return
         broker = self.config.get('broker', {})
         client_id = f"{broker.get('client_id_prefix', 'smartcity-bridge')}-{self.robot}-{os.getpid()}"
-        self.mqtt_client = mqtt.Client(client_id=client_id, clean_session=True)
-        username = env_value(broker, 'username')
-        password = env_value(broker, 'password')
-        if username:
-            self.mqtt_client.username_pw_set(username, password)
-        if broker.get('tls'):
-            self.mqtt_client.tls_set()
+        self.mqtt_client = mqtt_client(mqtt, client_id, broker)
         availability = self._topic('availability')
         self.mqtt_client.will_set(availability, 'offline', qos=1, retain=True)
         self.mqtt_client.on_connect = self._on_connect
         self.mqtt_client.on_disconnect = self._on_disconnect
+        self.mqtt_client.on_message = self._on_befehl
         try:
-            self.mqtt_client.connect(str(broker.get('host', '127.0.0.1')), int(broker.get('port', 1883)),
-                                     int(broker.get('keepalive', 30)))
+            # async: Ist der Broker beim Start nicht erreichbar, versucht paho es im Hintergrund weiter
+            self.mqtt_client.reconnect_delay_set(1, 30)
+            self.mqtt_client.connect_async(str(broker.get('host', '127.0.0.1')), int(broker.get('port', 1883)),
+                                           int(broker.get('keepalive', 30)))
             self.mqtt_client.loop_start()
         except Exception as exc:
             self.get_logger().error(f'MQTT-Verbindung fehlgeschlagen: {exc}')
@@ -85,7 +99,12 @@ class MqttBridge(Node):
         if self.mqtt_connected:
             self._enqueue(self._topic('availability'), 'online', 1, True)
             info = {'schema_version': '1.0', 'robot_id': self.robot, 'boot_id': self.boot_id,
-                    'software': 'smartcity-roboter', 'capabilities': ['ros2-telemetry']}
+                    'software': 'smartcity-roboter', 'capabilities': ['ros2-telemetry'],
+                    'befehle': sorted(self.befehle_erlaubt | {'stopp'}) if self.befehle_aktiv else []}
+            if self.befehle_aktiv:
+                info['capabilities'].append('commands')
+                base = self.config.get('base_topic', 'smartcity/robots').rstrip('/')
+                client.subscribe([(self._topic('cmd'), 1), (f'{base}/all/cmd', 1)])
             self._enqueue(self._topic('info'), dumps(info), 1, True)
             self.get_logger().info('MQTT-Broker verbunden')
         else:
@@ -95,6 +114,53 @@ class MqttBridge(Node):
         self.mqtt_connected = False
         if self.running:
             self.get_logger().warn(f'MQTT-Broker getrennt (RC {rc})')
+
+    def _on_befehl(self, client, userdata, message):
+        """Befehl vom Broker (laeuft im paho-Thread, darf nicht blockieren)."""
+        befehl, fehler = befehl_pruefen(message.payload, message.retain, self.befehle_erlaubt,
+                                        self.befehl_max_alter)
+        if befehl is not None and befehl.get('id') is not None:
+            if befehl['id'] in self.letzte_befehl_ids:
+                return                          # QoS 1 kann doppelt zustellen
+            self.letzte_befehl_ids = (self.letzte_befehl_ids + [befehl['id']])[-50:]
+        if fehler:
+            self.befehle_abgelehnt += 1
+            self.get_logger().warn(f'MQTT-Befehl abgelehnt: {fehler}', throttle_duration_sec=5)
+            antwort = {'befehl': None, 'ok': False, 'antwort': fehler}
+            try:
+                antwort.update(id=json.loads(message.payload).get('id'))
+            except (ValueError, AttributeError, TypeError):
+                pass
+            return self._befehl_antwort(antwort)
+        self.befehle_angenommen += 1
+        if befehl['befehl'] == 'stopp':
+            self.cmd_pub.publish(Twist())       # sofort, auch wenn das Panel nicht laeuft
+        threading.Thread(target=self._befehl_ausfuehren, args=(befehl,), daemon=True).start()
+
+    def _befehl_ausfuehren(self, befehl):
+        name = befehl['befehl']
+        von = str(befehl.get('von', 'Leitzentrale'))[:40]
+        self._ereignis(f'MQTT: {name.upper()} von {von}', 'stopp' if name == 'stopp' else 'info')
+        daten = {'wert': befehl['wert']} if 'wert' in befehl else {}
+        anfrage = urllib.request.Request(f'{self.panel_url}/api/{name}', data=json.dumps(daten).encode(),
+                                         headers={'Content-Type': 'application/json'}, method='POST')
+        try:
+            with urllib.request.urlopen(anfrage, timeout=15) as antwort:
+                text = json.loads(antwort.read() or b'{}').get('antwort', '')
+            ok = not str(text).startswith(('Fehler', 'Laeuft schon', 'Es laeuft schon', 'Linienfolger hat sich'))
+        except Exception as exc:
+            text, ok = f'Panel nicht erreichbar ({exc})', False
+            if name == 'stopp':
+                self.cmd_pub.publish(Twist())
+                text += '; Stillstand direkt an /cmd_vel gesendet'
+        self._befehl_antwort({'id': befehl.get('id'), 'befehl': name, 'ok': ok, 'antwort': text})
+
+    def _befehl_antwort(self, inhalt):
+        inhalt.update(schema_version='1.0', robot_id=self.robot, boot_id=self.boot_id, generated_at=utc_now())
+        self._enqueue(self._topic('cmd/result'), dumps(inhalt), 1, False)
+
+    def _ereignis(self, text, art):
+        self.ereignis_pub.publish(String(data=json.dumps({'zeit': time.time(), 'text': text, 'art': art})))
 
     def _load_subscriptions(self):
         for entry in self.config.get('subscriptions', []):
@@ -160,8 +226,11 @@ class MqttBridge(Node):
     def _status(self):
         status = {'schema_version': '1.0', 'robot_id': self.robot, 'boot_id': self.boot_id,
                   'connected': self.mqtt_connected, 'queued': self.queue.qsize(),
-                  'publish_errors': self.publish_errors, 'zeit': utc_now()}
+                  'publish_errors': self.publish_errors, 'zeit': utc_now(),
+                  'befehle_angenommen': self.befehle_angenommen, 'befehle_abgelehnt': self.befehle_abgelehnt}
         self.status_pub.publish(String(data=dumps(status)))
+        if self.mqtt_connected:
+            self._enqueue(self._topic('state/bridge'), dumps(dict(status, generated_at=status['zeit'])), 0, True)
 
     def _publish_maps(self):
         """Verteilt Kartenindex und geaenderte Kartendateien, ohne ROS-Callbacks zu blockieren."""

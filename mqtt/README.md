@@ -1,6 +1,11 @@
 # MQTT-Bridge
 
-Die Bridge liest konfigurierte ROS2-Topics und veroeffentlicht sie als versionierte JSON-Nachrichten am MQTT-Broker. Sie beeinflusst weder Motorbefehle noch lokale Fahrentscheidungen. ROS2 bleibt auch bei einem nicht erreichbaren Broker lauffaehig.
+Die Bridge verbindet den Roboter in beide Richtungen mit dem MQTT-Broker:
+
+- **Roboter -> Broker:** konfigurierte ROS2-Topics als versionierte JSON-Nachrichten (Status, Position, Ereignisse, Karten).
+- **Broker -> Roboter:** nur freigegebene Befehle (STOPP, TEST, Tempo; START nur nach Freigabe). Sie laufen ueber die lokale Panel-API, also mit denselben Pruefungen wie die Panel-Knoepfe.
+
+ROS2 und die lokale Fahrt bleiben auch bei einem nicht erreichbaren Broker lauffaehig. Ist der Broker beim Start noch nicht erreichbar, verbindet sich die Bridge automatisch, sobald er da ist.
 
 ## Einrichtung
 
@@ -18,6 +23,8 @@ export SMARTCITY_ROBOT_ID='RM02'
 ```bash
 python3 -m pip install --user paho-mqtt
 ```
+
+Funktioniert mit paho-mqtt 1.x und 2.x.
 
 ## Starten
 
@@ -43,6 +50,10 @@ smartcity/robots/RM02/state/line_follower
 smartcity/robots/RM02/events
 smartcity/robots/RM02/availability
 smartcity/robots/RM02/info
+smartcity/robots/RM02/state/bridge
+smartcity/robots/RM02/cmd          (Befehle an den Roboter)
+smartcity/robots/RM02/cmd/result   (Antworten des Roboters)
+smartcity/robots/all/cmd           (Befehle an alle Roboter)
 smartcity/robots/RM02/maps/index
 smartcity/robots/RM02/maps/smartcity/files/karte.png/000000
 ```
@@ -72,3 +83,40 @@ python3 mqtt/karten_holen.py --robot RM02 --output mqtt_karten
 ```
 
 Der Prozess bleibt aktiv und uebernimmt auch spaeter aktualisierte Karten. Mit `Strg+C` beenden.
+
+## Befehle an den Roboter
+
+Das Dashboard bzw. die Leitzentrale schickt Befehle nicht retained mit QoS 1 an `smartcity/robots/<ID>/cmd` (oder `smartcity/robots/all/cmd` fuer alle):
+
+```json
+{"id": "8f3c...", "befehl": "stopp", "von": "Leitzentrale", "gesendet": 1792500000.5}
+{"id": "8f3d...", "befehl": "tempo", "wert": 0.2, "gesendet": 1792500001.0}
+```
+
+| Feld | Bedeutung |
+|---|---|
+| `befehl` | `stopp`, `test`, `start` oder `tempo` (ein einfacher Text wie `stopp` geht auch) |
+| `id` | frei waehlbar; kommt in der Antwort zurueck, doppelte IDs werden nur einmal ausgefuehrt |
+| `wert` | nur bei `tempo`: Geschwindigkeit in m/s (das Panel begrenzt auf 0,05 bis 0,4) |
+| `gesendet` | Unix-Zeit in Sekunden; aeltere Befehle als `commands.max_age_seconds` werden verworfen (ausser STOPP) |
+| `von` | Absender, erscheint als Ereignis im Panel |
+
+Die Antwort kommt unter `smartcity/robots/<ID>/cmd/result`:
+
+```json
+{"id": "8f3c...", "befehl": "stopp", "ok": true, "antwort": "Gestoppt", "robot_id": "RM02", "generated_at": "..."}
+```
+
+Regeln:
+
+- **STOPP** ist immer erlaubt. Die Bridge sendet sofort Stillstand an `/cmd_vel` und beendet dann ueber das Panel den Linienfolger. Laeuft das Panel nicht, wird trotzdem Stillstand gesendet.
+- **START** ist standardmaessig gesperrt, weil jeder mit den Broker-Zugangsdaten den Roboter sonst losfahren lassen koennte. Freigabe in `config.yaml` unter `commands.allowed`.
+- **Retained-Befehle werden nie ausgefuehrt**, sonst wuerde ein alter Befehl nach jedem Neuverbinden erneut ausgeloest.
+- `info` listet unter `befehle`, was dieser Roboter annimmt.
+
+Testen ohne Roboter (startet einen lokalen Test-Broker):
+
+```bash
+python3 -m pip install --user paho-mqtt amqtt
+python3 tests/test_mqtt.py
+```

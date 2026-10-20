@@ -74,6 +74,7 @@ scripts/simulation.sh               # Simulation + Panel zum Zuschauen (Kamera �
 scripts/simulation.sh pruefen       # komplette Fahrt, prüft alles automatisch
 python3 tests/test_entscheider.py   # Regeln der KI
 python3 tests/test_karte.py         # Karte
+python3 tests/test_mqtt.py          # MQTT-Bridge in beide Richtungen (lokaler Test-Broker)
 python3 tests/panel_demo.py         # Panel mit Beispieldaten, http://localhost:8099
 ```
 
@@ -82,7 +83,7 @@ python3 tests/panel_demo.py         # Panel mit Beispieldaten, http://localhost:
 **Offen:**
 - Kreuzungen und Abbiegen nach Stadtplan (K1–K8), Wegwahl, „fahr zu X“
 - Abblendlicht an der LED-Leiste und Blinker beim Abbiegen
-- MQTT für die Leitzentrale: Bridge ist vorhanden, Broker-/Netzwerkabnahme und Datenvertrag sind noch offen ([mqtt/README.md](mqtt/README.md))
+- MQTT für die Leitzentrale: Bridge sendet Status und nimmt Befehle (STOPP/TEST/Tempo) an, Broker-/Netzwerkabnahme und Datenvertrag mit dem Dashboardteam sind noch offen ([mqtt/README.md](mqtt/README.md))
 - RTW-Einsatz (Sonderrechte) ist vorerst entfernt und kommt später wieder
 - Alle vier Roboter gleichzeitig: Dafür braucht jeder eine eigene Domain-ID ([docs/roboter.md](docs/roboter.md))
 

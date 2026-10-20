@@ -7,7 +7,7 @@ import json
 import os
 from pathlib import Path
 
-from common import env_value, load_config, robot_id
+from common import load_config, mqtt_client, robot_id
 
 try:
     mqtt = importlib.import_module('paho.mqtt.client')
@@ -34,12 +34,7 @@ def main():
     index = {}
     chunk_root = output / '.chunks'
     broker = config.get('broker', {})
-    client = mqtt.Client(client_id=f'smartcity-map-reader-{os.getpid()}')
-    username = env_value(broker, 'username')
-    if username:
-        client.username_pw_set(username, env_value(broker, 'password'))
-    if broker.get('tls'):
-        client.tls_set()
+    client = mqtt_client(mqtt, f'smartcity-map-reader-{os.getpid()}', broker)
 
     def assemble(map_name, file_name):
         meta = index.get(map_name, {}).get('files', {}).get(file_name)

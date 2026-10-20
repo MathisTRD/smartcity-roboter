@@ -66,6 +66,16 @@ subscriptions:
     qos: 0
     retain: false
 
+# Befehle vom Broker an den Roboter (Topic <base_topic>/<robot_id>/cmd oder <base_topic>/all/cmd).
+# Sie gehen an die lokale Panel-API, es gelten also dieselben Pruefungen wie beim Panel-Knopf.
+# STOPP ist immer erlaubt. "start" ist absichtlich NICHT freigegeben: Der Roboter faehrt dann los,
+# und jeder mit den Broker-Zugangsdaten koennte das ausloesen. Erst nach Absprache ergaenzen.
+commands:
+  enabled: true
+  allowed: [stopp, test, tempo]
+  max_age_seconds: 10        # aeltere Befehle (Feld "gesendet") werden verworfen, ausser STOPP
+  panel_url: "http://127.0.0.1:8080"
+
 # Nachrichten groesser als dieses Limit werden verworfen, damit MQTT die Fahrt nicht stoert.
 max_payload_bytes: 262144
 queue_size: 100
