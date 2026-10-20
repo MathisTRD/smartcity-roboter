@@ -2,7 +2,8 @@
 # Prueft die MQTT-Bridge in beide Richtungen (Roboter -> Broker und Broker -> Roboter), ohne Roboter und ohne ROS.
 # Aufruf:  python3 tests/test_mqtt.py
 # Teil 1 (Befehlspruefung) braucht nur PyYAML. Teil 2 startet einen lokalen Test-Broker und braucht
-# paho-mqtt und amqtt:  python3 -m pip install --user paho-mqtt amqtt   (sonst wird Teil 2 uebersprungen)
+# paho-mqtt und einen Broker: Mosquitto (Mac: brew install mosquitto, Linux: sudo apt install mosquitto)
+# oder amqtt (pip install amqtt, ab Python 3.10). Ohne Broker wird Teil 2 uebersprungen.
 import json
 import os
 import shutil
@@ -66,14 +67,35 @@ def warte(bedingung, sekunden=5.0):
     return False
 
 
+MOSQUITTO_ORTE = ('/opt/homebrew/sbin/mosquitto', '/usr/local/sbin/mosquitto', '/usr/sbin/mosquitto')
+
+
+def broker_starten(port, ordner):
+    """Startet Mosquitto oder amqtt auf 127.0.0.1:<port>. Rueckgabe: Prozess oder None."""
+    mosquitto = shutil.which('mosquitto') or next((p for p in MOSQUITTO_ORTE if os.path.exists(p)), None)
+    if mosquitto:
+        datei = os.path.join(ordner, 'mosquitto.conf')
+        with open(datei, 'w') as f:
+            f.write(f'listener {port} 127.0.0.1\nallow_anonymous true\n')
+        befehl = [mosquitto, '-c', datei]
+    elif shutil.which('amqtt'):
+        datei = os.path.join(ordner, 'broker.yaml')
+        with open(datei, 'w') as f:
+            f.write(f"listeners:\n  default:\n    type: tcp\n    bind: 127.0.0.1:{port}\n"
+                    "plugins:\n  amqtt.plugins.authentication.AnonymousAuthPlugin:\n    allow_anonymous: true\n"
+                    "auth:\n  allow-anonymous: true\n")
+        befehl = ['amqtt', '-c', datei]
+    else:
+        return None
+    print(f'-- Test-Broker: {os.path.basename(befehl[0])} auf Port {port}')
+    return subprocess.Popen(befehl, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def teil_broker():
     try:
         import paho.mqtt.client as mqtt
     except ImportError:
         print('-- Teil 2 uebersprungen: paho-mqtt fehlt')
-        return
-    if shutil.which('amqtt') is None:
-        print('-- Teil 2 uebersprungen: amqtt (Test-Broker) fehlt')
         return
     # rosidl_runtime_py gibt es ohne ROS nicht: kleine Attrappe fuer die Bridge
     konv = types.ModuleType('rosidl_runtime_py.convert')
@@ -88,11 +110,11 @@ def teil_broker():
 
     mqtt_port, panel_port = freier_port(), freier_port()
     ordner = tempfile.mkdtemp()
-    with open(os.path.join(ordner, 'broker.yaml'), 'w') as f:
-        f.write(f"listeners:\n  default:\n    type: tcp\n    bind: 127.0.0.1:{mqtt_port}\n"
-                "plugins:\n  amqtt.plugins.authentication.AnonymousAuthPlugin:\n    allow_anonymous: true\n")
-    broker = subprocess.Popen(['amqtt', '-c', os.path.join(ordner, 'broker.yaml')],
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    broker = broker_starten(mqtt_port, ordner)
+    if broker is None:
+        print('-- Teil 2 uebersprungen: kein Test-Broker (Mac: brew install mosquitto)')
+        shutil.rmtree(ordner, ignore_errors=True)
+        return
 
     # Attrappe der Panel-API: merkt sich, welche Aktionen ankommen
     panel_aufrufe = []
@@ -113,7 +135,10 @@ def teil_broker():
     threading.Thread(target=panel.serve_forever, daemon=True).start()
 
     try:
-        warte(lambda: socket.socket().connect_ex(('127.0.0.1', mqtt_port)) == 0)
+        def broker_da():
+            with socket.socket() as s:
+                return s.connect_ex(('127.0.0.1', mqtt_port)) == 0
+        pruefe('Test-Broker laeuft', warte(broker_da, 10))
         config = {'broker': {'host': '127.0.0.1', 'port': mqtt_port, 'keepalive': 10}, 'robot_id': 'RMTEST',
                   'base_topic': 'smartcity/robots', 'maps': {'directory': ordner},
                   'subscriptions': [{'ros_topic': '/ki/befehl', 'ros_type': 'std_msgs/msg/String',

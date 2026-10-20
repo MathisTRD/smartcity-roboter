@@ -117,6 +117,7 @@ Regeln:
 Testen ohne Roboter (startet einen lokalen Test-Broker):
 
 ```bash
-python3 -m pip install --user paho-mqtt amqtt
+python3 -m pip install --user paho-mqtt pyyaml
+brew install mosquitto          # Mac; Linux: sudo apt install mosquitto
 python3 tests/test_mqtt.py
 ```
