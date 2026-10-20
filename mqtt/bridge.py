@@ -44,7 +44,7 @@ class MqttBridge(Node):
         self.seq = 0
         self.queue = queue.Queue(maxsize=int(config.get('queue_size', 100)))
         self.max_payload = int(config.get('max_payload_bytes', 262144))
-        self.subscriptions = {}
+        self.ros_abos = {}
         self.mqtt_client = None
         self.mqtt_connected = False
         self.publish_errors = 0
@@ -170,7 +170,7 @@ class MqttBridge(Node):
                 qos = int(entry.get('qos', 0))
                 callback = lambda msg, entry=entry: self._message(entry, msg)
                 qos_profile = qos_profile_sensor_data if qos == 0 else 10
-                self.subscriptions[topic] = self.create_subscription(msg_type, topic, callback, qos_profile)
+                self.ros_abos[topic] = self.create_subscription(msg_type, topic, callback, qos_profile)
             except Exception as exc:
                 self.get_logger().error(f'ROS-Abo fuer {entry.get("ros_topic", "?")} fehlgeschlagen: {exc}')
 

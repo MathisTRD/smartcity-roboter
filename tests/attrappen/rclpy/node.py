@@ -24,3 +24,7 @@ class Node:
     def get_topic_names_and_types(self): return []
     def count_publishers(self, t): return 1
     def destroy_node(self): pass
+    # wie im echten rclpy schreibgeschuetzt (sonst AttributeError beim Start der MQTT-Bridge)
+    subscriptions = property(lambda self: [])
+    publishers = property(lambda self: [])
+    timers = property(lambda self: [])
