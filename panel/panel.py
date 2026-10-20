@@ -827,6 +827,7 @@ def main():
     rclpy.init()
     node = PanelNode(args)
     prozesse = Prozesse()
+    prozesse.start('mqtt', ['bash', os.path.join(REPO, 'scripts', 'mqtt_bridge.sh')], 'MQTT-Bridge')
     executor = SingleThreadedExecutor()
     executor.add_node(node)
     threading.Thread(target=executor.spin, daemon=True).start()

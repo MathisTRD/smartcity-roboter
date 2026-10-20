@@ -74,4 +74,14 @@ else
         pip3 install --user "onnxruntime<1.20" "numpy<2"
     fi
 fi
+
+# MQTT-Telemetrie (Bridge laeuft beim Panel-Start automatisch)
+if python3 -c "import paho.mqtt.client" 2>/dev/null; then
+    echo "paho-mqtt: ok"
+else
+    read -r -p "paho-mqtt fehlt (fuer MQTT-Telemetrie). Jetzt installieren? (j/n) " ok
+    if [ "$ok" = "j" ]; then
+        pip3 install --user "paho-mqtt<3"
+    fi
+fi
 echo; echo "Anzeige fuer das Panel (Chromium geht auf dem Jetson oft nicht): scripts/browser_installieren.sh"

@@ -58,6 +58,7 @@ Das Dashboard passt auch auf den 7-Zoll-Bildschirm des Roboters (1024×600) und 
 | `ki/` | KI-Zentrale und Entscheidungsregeln |
 | `kartograf/`, `lib/karte.py` | Karte 2D/3D |
 | `panel/` | Bedienoberfläche (Webseite) |
+| `mqtt/` | ROS2-zu-MQTT-Bridge, Broker-Konfiguration und MQTT-Leser |
 | `sim/` | Simulation ohne Roboter |
 | `scripts/` | Start- und Hilfsskripte (Panel, Simulation, Update, Not-Aus). Tests der Sensoren gehen über das Panel |
 | `config/` | Standardeinstellungen; eigene Werte in `config/lokal/` (nicht im Repository) |
@@ -81,7 +82,7 @@ python3 tests/panel_demo.py         # Panel mit Beispieldaten, http://localhost:
 **Offen:**
 - Kreuzungen und Abbiegen nach Stadtplan (K1–K8), Wegwahl, „fahr zu X“
 - Abblendlicht an der LED-Leiste und Blinker beim Abbiegen
-- MQTT für die Leitzentrale
+- MQTT für die Leitzentrale: Bridge ist vorhanden, Broker-/Netzwerkabnahme und Datenvertrag sind noch offen ([mqtt/README.md](mqtt/README.md))
 - RTW-Einsatz (Sonderrechte) ist vorerst entfernt und kommt später wieder
 - Alle vier Roboter gleichzeitig: Dafür braucht jeder eine eigene Domain-ID ([docs/roboter.md](docs/roboter.md))
 

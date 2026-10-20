@@ -1,0 +1,79 @@
+# MQTT-Bridge fuer einen Roboter.
+# Fuer den aktuellen Funktionstest direkt eingetragen. Spaeter besser ueber *_env setzen.
+# Den Broker vor dem Betrieb mit dem Netzwerkteam abstimmen.
+broker:
+  host: "172.16.3.29"
+  port: 1883
+  keepalive: 30
+  tls: false
+  username: "smart_city"
+  password: "turbocity"
+
+robot_id: ""  # leer = ~/roboter_name oder SMARTCITY_ROBOT_ID
+base_topic: "smartcity/robots"
+
+# Jede Nachricht wird als versionierte JSON-Huelle veroeffentlicht.
+# Weitere ROS2-Topics koennen hier mit ihrem ROS-Typ ergaenzt werden.
+subscriptions:
+  - ros_topic: /ki/befehl
+    ros_type: std_msgs/msg/String
+    mqtt_suffix: state/ki_befehl
+    qos: 1
+    retain: true
+  - ros_topic: /ki/ereignis
+    ros_type: std_msgs/msg/String
+    mqtt_suffix: events
+    qos: 1
+    retain: false
+  - ros_topic: /line_follower/status
+    ros_type: std_msgs/msg/String
+    mqtt_suffix: state/line_follower
+    qos: 1
+    retain: true
+  - ros_topic: /karte/pose
+    ros_type: std_msgs/msg/String
+    mqtt_suffix: state/karte
+    qos: 1
+    retain: true
+  - ros_topic: /ki/antwort
+    ros_type: std_msgs/msg/String
+    mqtt_suffix: state/ki_antwort
+    qos: 1
+    retain: true
+  - ros_topic: /cmd_vel
+    ros_type: geometry_msgs/msg/Twist
+    mqtt_suffix: state/cmd_vel
+    qos: 1
+    retain: true
+  - ros_topic: /odom_raw
+    ros_type: nav_msgs/msg/Odometry
+    mqtt_suffix: state/odometry
+    qos: 1
+    retain: true
+  - ros_topic: /imu/data_raw
+    ros_type: sensor_msgs/msg/Imu
+    mqtt_suffix: state/imu
+    qos: 1
+    retain: true
+  - ros_topic: /scan0
+    ros_type: sensor_msgs/msg/LaserScan
+    mqtt_suffix: details/scan0
+    qos: 0
+    retain: false
+  - ros_topic: /scan1
+    ros_type: sensor_msgs/msg/LaserScan
+    mqtt_suffix: details/scan1
+    qos: 0
+    retain: false
+
+# Nachrichten groesser als dieses Limit werden verworfen, damit MQTT die Fahrt nicht stoert.
+max_payload_bytes: 262144
+queue_size: 100
+
+# Bereits gespeicherte Karten regelmaessig am Broker verfuegbar machen.
+# Binaere Dateien werden als retained MQTT-Nachrichten in Bloecke geteilt.
+maps:
+  directory: "karten"
+  interval_seconds: 10
+  chunk_bytes: 200000
+  files: [karte.json, karte.png, karte.ply, karte.npz, wolke.bin]
